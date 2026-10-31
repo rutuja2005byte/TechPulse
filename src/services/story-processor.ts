@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import type { Json } from '../types/database.js';
 import type { StoryGroup } from '../types/story-analysis.js';
 import { analyzeArticles, type AnalysisArticle, type ExistingStoryContext } from './gemini-story-analyzer.js';
+import { isFreeTierStopError } from './free-tier-guard.js';
 
 const supabaseAdmin = createSupabaseAdminClient();
 const MAX_ARTICLE_PAGE = 500;
@@ -331,6 +332,7 @@ async function processArticleBatch(articles: AnalysisArticle[]): Promise<Process
       result.articlesLinked += group.article_ids.length;
       console.info(`Stored story ${storyId} with ${group.article_ids.length} source article(s).`);
     } catch (error) {
+      if (isFreeTierStopError(error)) throw error;
       result.failedStories += 1;
       result.failedDatabaseOperations += 1;
       console.error(`Story storage failed [${group.headline}]: ${error instanceof Error ? error.message : String(error)}`);
@@ -348,6 +350,7 @@ async function processArticleBatch(articles: AnalysisArticle[]): Promise<Process
       { onConflict: 'article_id', ignoreDuplicates: true },
     );
     if (error) {
+      if (isFreeTierStopError(error)) throw error;
       result.failedDatabaseOperations += 1;
       console.error(`Could not record excluded article decisions: ${error.message}`);
     } else {

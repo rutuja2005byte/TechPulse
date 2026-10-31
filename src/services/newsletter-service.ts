@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { env } from '../config/env.js';
 import { createSupabaseAdminClient } from '../config/supabase-admin.js';
 import type { Json } from '../types/database.js';
+import { isFreeTierExhaustion, redactSensitiveText, requireFreeTierConfirmation, stopForFreeTierExhaustion } from './free-tier-guard.js';
 
 const supabaseAdmin = createSupabaseAdminClient();
 
@@ -163,7 +164,11 @@ async function assertSenderDomainVerified(apiKey: string, from: string): Promise
     data?: Array<{ name?: string; status?: string; capabilities?: { sending?: string } }>;
     message?: string;
   };
-  if (!response.ok) throw new Error(`Could not verify sender domain with Resend (HTTP ${response.status}): ${body.message ?? 'domain lookup failed'}`);
+  if (!response.ok) {
+    const message = redactSensitiveText(body.message ?? 'domain lookup failed', apiKey);
+    if (isFreeTierExhaustion(response.status, message)) stopForFreeTierExhaustion('Resend', response.status, message);
+    throw new Error(`Could not verify sender domain with Resend (HTTP ${response.status}): ${message}`);
+  }
   const matching = body.data?.find((entry) => entry.name?.toLowerCase() === domain);
   if (!matching || matching.status !== 'verified' || matching.capabilities?.sending !== 'enabled') {
     throw new Error(`Resend sender domain ${domain} is not verified for sending. Verify it in Resend before sending; no newsletter record was changed.`);
@@ -192,6 +197,7 @@ interface TestNewsletterRecord {
 }
 
 export async function sendNewsletter(retryFailed = false): Promise<void> {
+  requireFreeTierConfirmation(env.freeTierConfirmed, 'Resend');
   const { apiKey, from, recipients } = validatedSendConfiguration();
   const newsletterDate = new Date().toISOString().slice(0, 10);
   const { data: existing, error: lookupError } = await supabaseAdmin
@@ -265,7 +271,7 @@ export async function sendNewsletter(retryFailed = false): Promise<void> {
       body: JSON.stringify({ from, to: recipients, subject, html }),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = redactSensitiveText(error instanceof Error ? error.message : String(error), apiKey);
     const { error: updateError } = await supabaseAdmin.from('newsletters').update({ delivery_error: message }).eq('id', newsletter.id);
     if (updateError) console.error(`[Newsletter] Could not record ambiguous Resend request: ${updateError.message}`);
     throw new Error(`Resend request outcome is unknown; newsletter remains queued to prevent a duplicate send. Check Resend email logs before any manual recovery.`);
@@ -273,12 +279,14 @@ export async function sendNewsletter(retryFailed = false): Promise<void> {
 
   const responseBody = await response.json().catch(() => ({})) as { id?: string; message?: string; name?: string };
   if (!response.ok || !responseBody.id) {
-    const message = responseBody.message ?? responseBody.name ?? `Resend returned HTTP ${response.status}.`;
+    const message = redactSensitiveText(responseBody.message ?? responseBody.name ?? `Resend returned HTTP ${response.status}.`, apiKey);
+    const freeTierBlocked = isFreeTierExhaustion(response.status, message);
     const ambiguous = response.status >= 500 || responseBody.name === 'concurrent_idempotent_requests';
     const { error: updateError } = await supabaseAdmin.from('newsletters')
-      .update({ delivery_status: ambiguous ? 'queued' : 'failed', delivery_error: message })
+      .update({ delivery_status: freeTierBlocked ? 'failed' : ambiguous ? 'queued' : 'failed', delivery_error: message })
       .eq('id', newsletter.id);
     if (updateError) console.error(`[Newsletter] Failed to record Resend error in Supabase: ${updateError.message}`);
+    if (freeTierBlocked) stopForFreeTierExhaustion('Resend', response.status, message);
     throw new Error(`Resend ${ambiguous ? 'returned an ambiguous' : 'rejected the'} result (HTTP ${response.status}): ${message}${ambiguous ? ' Newsletter remains queued; do not retry until the Resend outcome is checked.' : ' A corrected retry may reuse this newsletter record.'}`);
   }
 
@@ -295,6 +303,7 @@ export async function sendNewsletter(retryFailed = false): Promise<void> {
 
 /** Sends an existing accepted newsletter to the single configured Gmail as a separate test send. */
 export async function sendNewsletterTest(newsletterId: string): Promise<void> {
+  requireFreeTierConfirmation(env.freeTierConfirmed, 'Resend');
   const { apiKey, from, recipients } = validatedSendConfiguration(true);
   if (recipients.length !== 1 || !/^[^\s@]+@gmail\.com$/i.test(recipients[0])) {
     throw new Error('Test send requires exactly one Gmail address in NEWSLETTER_RECIPIENTS.');
@@ -350,19 +359,21 @@ export async function sendNewsletterTest(newsletterId: string): Promise<void> {
       body: JSON.stringify({ from, to: recipients, subject: source.subject, html: source.html_content }),
     });
   } catch (sendError) {
-    const message = sendError instanceof Error ? sendError.message : String(sendError);
+    const message = redactSensitiveText(sendError instanceof Error ? sendError.message : String(sendError), apiKey);
     await supabaseAdmin.from('newsletter_test_sends').update({ delivery_error: message }).eq('id', testSend.id);
     throw new Error('Test-send outcome is ambiguous; the test record remains queued and will not be automatically resent.');
   }
 
   const responseBody = await response.json().catch(() => ({})) as { id?: string; message?: string; name?: string };
   if (!response.ok || !responseBody.id) {
-    const message = responseBody.message ?? responseBody.name ?? `Resend returned HTTP ${response.status}.`;
+    const message = redactSensitiveText(responseBody.message ?? responseBody.name ?? `Resend returned HTTP ${response.status}.`, apiKey);
+    const freeTierBlocked = isFreeTierExhaustion(response.status, message);
     const ambiguous = response.status >= 500 || responseBody.name === 'concurrent_idempotent_requests';
     await supabaseAdmin.from('newsletter_test_sends').update({
-      send_status: ambiguous ? 'queued' : 'failed',
+      send_status: freeTierBlocked ? 'failed' : ambiguous ? 'queued' : 'failed',
       delivery_error: message,
     }).eq('id', testSend.id);
+    if (freeTierBlocked) stopForFreeTierExhaustion('Resend', response.status, message);
     throw new Error(`Resend ${ambiguous ? 'returned an ambiguous' : 'rejected the test send'} (HTTP ${response.status}): ${message}`);
   }
 

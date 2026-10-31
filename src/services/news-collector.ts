@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import { createSupabaseAdminClient } from '../config/supabase-admin.js';
 import type { FeedSource, NormalizedArticle } from '../types/article.js';
 import { normalizeArticle } from './article-normalizer.js';
+import { isFreeTierStopError } from './free-tier-guard.js';
 
 const parser = new Parser({
   timeout: env.feedTimeoutMs,
@@ -138,12 +139,14 @@ export async function collectNews(): Promise<CollectionResult> {
       supabaseAdmin.from('articles').select('content_hash').eq('source_id', source.id).in('content_hash', hashes),
     ]);
     if (urlResult.error) {
+      if (isFreeTierStopError(urlResult.error)) throw urlResult.error;
       result.failedDatabaseOperations += 1;
       console.error(`Database duplicate check failed [${source.name}]: ${urlResult.error.message}`);
       console.info(`${source.name}: fetched=${feedItems.length}, stored=0, skipped=${result.skipped - sourceStart.skipped}, failedFeeds=0, failedArticles=0, failedDatabaseOperations=1.`);
       continue;
     }
     if (hashResult.error) {
+      if (isFreeTierStopError(hashResult.error)) throw hashResult.error;
       result.failedDatabaseOperations += 1;
       console.error(`Database content-hash check failed [${source.name}]: ${hashResult.error.message}`);
       console.info(`${source.name}: fetched=${feedItems.length}, stored=0, skipped=${result.skipped - sourceStart.skipped}, failedFeeds=0, failedArticles=0, failedDatabaseOperations=1.`);
@@ -183,6 +186,7 @@ export async function collectNews(): Promise<CollectionResult> {
         sourceStored += 1;
         continue;
       }
+      if (isFreeTierStopError(error)) throw error;
       if (error.code === '23505') {
         result.skipped += 1;
         logSkipped(source, article.title, 'duplicate rejected by Supabase unique constraint');

@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { env } from '../config/env.js';
+import { isFreeTierExhaustion, redactSensitiveText, requireFreeTierConfirmation, stopForFreeTierExhaustion } from './free-tier-guard.js';
 import {
   STORY_ANALYSIS_RESPONSE_SCHEMA,
   StoryAnalysisResponseSchema,
@@ -58,6 +59,7 @@ export async function analyzeArticles(
   articles: AnalysisArticle[],
   existingStories: ExistingStoryContext[],
 ): Promise<StoryAnalysisResponse> {
+  requireFreeTierConfirmation(env.freeTierConfirmed, 'Gemini');
   if (!env.geminiApiKey) {
     throw new Error('GEMINI_API_KEY is required. Add it to the private .env file; do not put it in source code or share it in chat.');
   }
@@ -94,13 +96,16 @@ export async function analyzeArticles(
       console.info(`[Gemini] Response received in ${Date.now() - startedAt}ms; output characters=${responseText?.length ?? 0}; finishReason=${responseFinishReason}.${responseUsage}`);
       break;
     } catch (error) {
+      const status = httpStatus(error);
+      const message = redactSensitiveText(error instanceof Error ? error.message : String(error), env.geminiApiKey);
+      if (isFreeTierExhaustion(status, message)) {
+        stopForFreeTierExhaustion('Gemini', status, message);
+      }
       if (!shouldRetry(error) || attempt === 2) {
-        const status = httpStatus(error);
-        console.error(`[Gemini] Request failed${status ? ` (HTTP ${status})` : ''}: ${error instanceof Error ? error.message : String(error)}`);
-        throw new Error(`Gemini request failed${status ? ` (HTTP ${status})` : ''}: ${error instanceof Error ? error.message : String(error)}`);
+        console.error(`[Gemini] Request failed${status ? ` (HTTP ${status})` : ''}: ${message}`);
+        throw new Error(`Gemini request failed${status ? ` (HTTP ${status})` : ''}: ${message}`);
       }
       const delayMs = 1_000 * 2 ** attempt;
-      const status = httpStatus(error);
       console.warn(`[Gemini] Temporary failure${status ? ` (HTTP ${status})` : ''}; retrying in ${delayMs}ms (attempt ${attempt + 2}/3).`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }

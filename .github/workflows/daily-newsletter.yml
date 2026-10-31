@@ -18,6 +18,7 @@ on:
         default: false
 
 permissions:
+  actions: write
   contents: read
 
 concurrency:
@@ -31,6 +32,16 @@ jobs:
     timeout-minutes: 45
 
     steps:
+      - name: Require verified free-tier account protections
+        env:
+          FREE_TIER_CONFIRMED: ${{ vars.TECHPULSE_FREE_TIER_CONFIRMED }}
+        run: |
+          if [[ "$FREE_TIER_CONFIRMED" != "true" ]]; then
+            echo '[TECHPULSE_FREE_TIER_STOP] Free-tier billing protections are not confirmed. Workflow stopped before checkout or API use.' | tee "$RUNNER_TEMP/techpulse-free-tier-check.log" >&2
+            exit 1
+          fi
+          echo 'Free-tier protection acknowledgement is present; this is not a provider-side billing guarantee.'
+
       - name: Check out repository
         uses: actions/checkout@v4
 
@@ -103,7 +114,7 @@ jobs:
 
       - name: Generate newsletter preview
         id: preview
-        if: ${{ steps.ai.outputs.stories_changed != '0' && !(github.event_name == 'workflow_dispatch' && inputs.retry_failed_newsletter) }}
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.retry_failed_newsletter) }}
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -138,7 +149,28 @@ jobs:
         run: |
           set -euo pipefail
           if [[ "${{ inputs.retry_failed_newsletter }}" == "true" ]]; then
-            npm run newsletter -- --retry
+            npm run newsletter -- --retry 2>&1 | tee "$RUNNER_TEMP/techpulse-newsletter-send.log"
           else
-            npm run newsletter -- --send
+            npm run newsletter -- --send 2>&1 | tee "$RUNNER_TEMP/techpulse-newsletter-send.log"
+          fi
+
+      - name: Disable workflow after free-tier stop condition
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          logs=("$RUNNER_TEMP"/techpulse-*.log)
+          if ! grep -Fq '[TECHPULSE_FREE_TIER_STOP]' "${logs[@]}" 2>/dev/null; then
+            echo 'No free-tier stop condition detected; workflow remains enabled.'
+            exit 0
+          fi
+
+          echo 'A provider quota/payment restriction was detected. Disabling this workflow to prevent future scheduled runs.'
+          if gh api --method PUT "repos/${GITHUB_REPOSITORY}/actions/workflows/daily-newsletter.yml/disable"; then
+            echo 'TechPulse workflow disabled. Re-enable it manually only after reviewing free-tier access and billing protections.'
+          else
+            echo 'ERROR: Automatic workflow disable failed. Disable TechPulse Daily Newsletter in GitHub Actions immediately.' >&2
+            exit 1
           fi

@@ -12,7 +12,8 @@
     "process:ai": "tsx src/process-ai.ts",
     "newsletter": "tsx src/newsletter.ts",
     "seed:sources": "tsx src/seed-sources.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test:free-tier-guard": "node --import tsx --test src/services/free-tier-guard.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.32.0",
