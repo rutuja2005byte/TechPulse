@@ -14,6 +14,13 @@ if [[ "$(uname -s)" != 'Darwin' ]]; then
   exit 1
 fi
 
+case "${REPO_ROOT}/" in
+  "${HOME}/Documents/"*|"${HOME}/Desktop/"*|"${HOME}/Downloads/"*)
+    echo 'Move the repository outside macOS privacy-protected Documents/Desktop/Downloads (for example, ~/Projects/TechPulse) before installing a LaunchAgent. A launchd job does not inherit Terminal folder access.' >&2
+    exit 1
+    ;;
+esac
+
 NODE_BIN="$(command -v node || true)"
 NPM_BIN="$(command -v npm || true)"
 if [[ -z "$NODE_BIN" || -z "$NPM_BIN" ]]; then

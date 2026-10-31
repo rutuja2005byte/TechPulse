@@ -53,6 +53,8 @@ bash scripts/launch-agent/uninstall.sh
 
 Logs are private files in `~/Library/Logs/TechPulse/`. Local pause/lock state is in `~/Library/Application Support/TechPulse/`. To inspect status use `launchctl print gui/$(id -u)/com.techpulse.daily-newsletter`. The agent only starts at login; if the Mac remains logged in across a date change, it does not run at midnight. Log out and back in (or restart/login) to trigger that day's check.
 
+Keep the repository outside macOS privacy-protected `Documents`, `Desktop`, and `Downloads` folders for LaunchAgent use (for example, `~/Projects/TechPulse`). A background LaunchAgent does not inherit Terminal's folder-access grant. The installer rejects those locations. If logs show `Operation not permitted`, disable the agent, move the whole repository, install from its new location, then enable it only when ready for a possible send.
+
 ### Existing GitHub workflow
 
 This project previously had a scheduled GitHub Actions workflow. Its workflow file has been removed locally to avoid maintaining two schedulers. Local edits do not disable a workflow already present in GitHub: **disable “TechPulse Daily Newsletter” in the repository's Actions tab before enabling this LaunchAgent.** No GitHub settings have been changed by these local edits.
