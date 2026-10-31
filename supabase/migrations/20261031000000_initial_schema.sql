@@ -24,6 +24,7 @@ create table if not exists public.articles (
   id uuid primary key default gen_random_uuid(),
   title text not null,
   description text,
+  author text,
   url text not null unique,
   source_id uuid not null references public.sources(id) on delete restrict,
   published_at timestamptz,

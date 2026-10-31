@@ -7,13 +7,13 @@ export type Database = {
         Row: { id: string; name: string; url: string; source_type: string; is_active: boolean; created_at: string; updated_at: string };
         Insert: { id?: string; name: string; url: string; source_type: string; is_active?: boolean; created_at?: string; updated_at?: string };
         Update: { id?: string; name?: string; url?: string; source_type?: string; is_active?: boolean; created_at?: string; updated_at?: string };
-        Relationships: [{ foreignKeyName: 'articles_source_id_fkey'; columns: ['source_id']; isOneToOne: false; referencedRelation: 'sources'; referencedColumns: ['id'] }];
+        Relationships: [];
       };
       articles: {
-        Row: { id: string; title: string; description: string | null; url: string; source_id: string; published_at: string | null; content_hash: string; created_at: string };
-        Insert: { id?: string; title: string; description?: string | null; url: string; source_id: string; published_at?: string | null; content_hash: string; created_at?: string };
-        Update: { id?: string; title?: string; description?: string | null; url?: string; source_id?: string; published_at?: string | null; content_hash?: string; created_at?: string };
-        Relationships: [];
+        Row: { id: string; title: string; description: string | null; author: string | null; url: string; source_id: string; published_at: string | null; content_hash: string; created_at: string };
+        Insert: { id?: string; title: string; description?: string | null; author?: string | null; url: string; source_id: string; published_at?: string | null; content_hash: string; created_at?: string };
+        Update: { id?: string; title?: string; description?: string | null; author?: string | null; url?: string; source_id?: string; published_at?: string | null; content_hash?: string; created_at?: string };
+        Relationships: [{ foreignKeyName: 'articles_source_id_fkey'; columns: ['source_id']; isOneToOne: false; referencedRelation: 'sources'; referencedColumns: ['id'] }];
       };
       stories: {
         Row: { id: string; headline: string; summary: string; detailed_content: string; importance_score: number; created_at: string; updated_at: string };
