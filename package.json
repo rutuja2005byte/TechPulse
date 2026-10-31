@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "collect": "tsx src/collect.ts",
     "process:ai": "tsx src/process-ai.ts",
+    "newsletter": "tsx src/newsletter.ts",
     "seed:sources": "tsx src/seed-sources.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

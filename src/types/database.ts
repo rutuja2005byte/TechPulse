@@ -31,9 +31,9 @@ export type Database = {
         ];
       };
       newsletters: {
-        Row: { id: string; newsletter_date: string; subject: string; html_content: string; delivery_status: string; created_at: string; updated_at: string };
-        Insert: { id?: string; newsletter_date: string; subject: string; html_content: string; delivery_status?: string; created_at?: string; updated_at?: string };
-        Update: { id?: string; newsletter_date?: string; subject?: string; html_content?: string; delivery_status?: string; created_at?: string; updated_at?: string };
+        Row: { id: string; newsletter_date: string; subject: string; html_content: string; delivery_status: string; resend_email_id: string | null; recipient_count: number | null; sent_at: string | null; delivery_error: string | null; created_at: string; updated_at: string };
+        Insert: { id?: string; newsletter_date: string; subject: string; html_content: string; delivery_status?: string; resend_email_id?: string | null; recipient_count?: number | null; sent_at?: string | null; delivery_error?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; newsletter_date?: string; subject?: string; html_content?: string; delivery_status?: string; resend_email_id?: string | null; recipient_count?: number | null; sent_at?: string | null; delivery_error?: string | null; created_at?: string; updated_at?: string };
         Relationships: [];
       };
     };

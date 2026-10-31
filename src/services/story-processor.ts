@@ -113,14 +113,8 @@ function verifyAssignments(
 }
 
 async function fetchUnprocessedArticles(limit: number): Promise<AnalysisArticle[]> {
-  console.info('[Supabase] Checking article processing relationships.');
-  const { data: linkedRows, error: linkedError } = await supabaseAdmin.from('story_articles').select('article_id');
-  if (linkedError) throw new Error(`Could not load processed article IDs (story_articles migration/table required): ${linkedError.message}`);
-  const processed = new Set((linkedRows ?? []).map(({ article_id }) => article_id));
-  console.info(`[Supabase] Found ${processed.size} article(s) already assigned or excluded.`);
-  const candidates: Array<{ id: string; title: string; description: string | null; author: string | null; url: string; published_at: string | null; source_id: string }> = [];
-
-  console.info('[Supabase] Loading unprocessed articles.');
+  console.info('[Supabase] Loading article rows and processing dispositions.');
+  const allArticles: Array<{ id: string; title: string; description: string | null; author: string | null; url: string; published_at: string | null; source_id: string }> = [];
   for (let offset = 0; ; offset += MAX_ARTICLE_PAGE) {
     const { data, error } = await supabaseAdmin
       .from('articles')
@@ -128,14 +122,56 @@ async function fetchUnprocessedArticles(limit: number): Promise<AnalysisArticle[
       .order('published_at', { ascending: false, nullsFirst: false })
       .range(offset, offset + MAX_ARTICLE_PAGE - 1);
     if (error) throw new Error(`Could not load articles for AI processing: ${error.message}`);
-
-    for (const article of data ?? []) {
-      if (!processed.has(article.id)) candidates.push(article);
-      if (candidates.length >= limit) break;
-    }
-    if (candidates.length >= limit || (data ?? []).length < MAX_ARTICLE_PAGE) break;
+    allArticles.push(...(data ?? []));
+    if ((data ?? []).length < MAX_ARTICLE_PAGE) break;
   }
 
+  console.info(`[Supabase] Loaded ${allArticles.length} article row(s); checking relationship validity.`);
+  const allArticleIds = new Set(allArticles.map(({ id }) => id));
+  const dispositionRows: Array<{ article_id: string; story_id: string | null; is_relevant: boolean; exclusion_reason: string | null }> = [];
+  for (let offset = 0; ; offset += MAX_ARTICLE_PAGE) {
+    const { data, error } = await supabaseAdmin
+      .from('story_articles')
+      .select('article_id,story_id,is_relevant,exclusion_reason')
+      .range(offset, offset + MAX_ARTICLE_PAGE - 1);
+    if (error) throw new Error(`Could not load article dispositions (story_articles migration/table required): ${error.message}`);
+    dispositionRows.push(...(data ?? []));
+    if ((data ?? []).length < MAX_ARTICLE_PAGE) break;
+  }
+
+  const referencedStoryIds = [...new Set(dispositionRows.flatMap(({ story_id }) => story_id ? [story_id] : []))];
+  const existingStoryIds = new Set<string>();
+  for (let offset = 0; offset < referencedStoryIds.length; offset += 200) {
+    const storyIdBatch = referencedStoryIds.slice(offset, offset + 200);
+    const { data, error } = await supabaseAdmin.from('stories').select('id').in('id', storyIdBatch);
+    if (error) throw new Error(`Could not validate article-to-story references: ${error.message}`);
+    for (const story of data ?? []) existingStoryIds.add(story.id);
+  }
+
+  const processed = new Set<string>();
+  let invalidDispositionCount = 0;
+  for (const row of dispositionRows) {
+    const validLinked = allArticleIds.has(row.article_id)
+      && row.is_relevant === true
+      && row.story_id !== null
+      && existingStoryIds.has(row.story_id)
+      && row.exclusion_reason === null;
+    const validExcluded = allArticleIds.has(row.article_id)
+      && row.is_relevant === false
+      && row.story_id === null
+      && typeof row.exclusion_reason === 'string'
+      && row.exclusion_reason.trim().length > 0;
+
+    if (validLinked || validExcluded) {
+      processed.add(row.article_id);
+    } else {
+      invalidDispositionCount += 1;
+      console.warn(`[Supabase] Invalid disposition for article ${row.article_id}; treating it as unprocessed and preserving the row until a valid replacement is stored.`);
+    }
+  }
+
+  const candidates = allArticles.filter(({ id }) => !processed.has(id)).slice(0, limit);
+  console.info(`[Supabase] Valid processed dispositions: ${processed.size} (${dispositionRows.length - invalidDispositionCount} valid row(s)); invalid disposition rows: ${invalidDispositionCount}; unprocessed articles: ${allArticles.length - processed.size}.`);
   if (!candidates.length) return [];
   console.info(`[Supabase] Selected ${candidates.length} unprocessed article(s); resolving source names.`);
   const sourceIds = [...new Set(candidates.map(({ source_id }) => source_id))];
@@ -356,4 +392,121 @@ export async function processUnprocessedArticles(): Promise<ProcessingResult> {
 
   console.info(`AI processing totals: articles=${totals.articlesFetched}, storiesCreated=${totals.storiesCreated}, storiesUpdated=${totals.storiesUpdated}, articlesLinked=${totals.articlesLinked}, articlesExcluded=${totals.articlesExcluded}, failedStories=${totals.failedStories}, failedDatabaseOperations=${totals.failedDatabaseOperations}.`);
   return totals;
+}
+
+/**
+ * Safely regenerate one existing story without clearing or replacing its article
+ * dispositions. The operation is intentionally strict: Gemini must return the
+ * exact same article set and story ID, otherwise nothing is written.
+ */
+export async function reprocessExistingStory(storyId: string): Promise<ProcessingResult> {
+  console.info(`[AI] Safely reprocessing existing story ${storyId}; existing relationships will be preserved.`);
+  if (!env.geminiApiKey) throw new Error('GEMINI_API_KEY is required for AI reprocessing.');
+
+  const { data: story, error: storyError } = await supabaseAdmin
+    .from('stories')
+    .select('id,headline,summary,detailed_content,source_links,verified_facts,story_key')
+    .eq('id', storyId)
+    .single();
+  if (storyError) throw new Error(`Could not load story ${storyId}: ${storyError.message}`);
+
+  const { data: relationships, error: relationshipError } = await supabaseAdmin
+    .from('story_articles')
+    .select('article_id,story_id,is_relevant,exclusion_reason')
+    .eq('story_id', storyId)
+    .eq('is_relevant', true);
+  if (relationshipError) throw new Error(`Could not load story relationships: ${relationshipError.message}`);
+  if (!relationships?.length || relationships.some((row) => row.story_id !== storyId || row.exclusion_reason !== null)) {
+    throw new Error('Story has no valid linked articles or has inconsistent relationships; refusing to reprocess.');
+  }
+
+  const articleIds = relationships.map(({ article_id }) => article_id);
+  const { data: rows, error: articleError } = await supabaseAdmin
+    .from('articles')
+    .select('id,title,description,author,url,published_at,source_id')
+    .in('id', articleIds);
+  if (articleError) throw new Error(`Could not load source articles: ${articleError.message}`);
+  if (!rows || rows.length !== articleIds.length) throw new Error('One or more linked source articles are missing; refusing to reprocess.');
+
+  const sourceIds = [...new Set(rows.map(({ source_id }) => source_id))];
+  const { data: sources, error: sourceError } = await supabaseAdmin.from('sources').select('id,name').in('id', sourceIds);
+  if (sourceError) throw new Error(`Could not resolve source names: ${sourceError.message}`);
+  const sourceNames = new Map((sources ?? []).map(({ id, name }) => [id, name]));
+  const articles: AnalysisArticle[] = rows.map((article) => ({
+    ...article,
+    source_name: sourceNames.get(article.source_id) ?? 'Unknown source',
+    description: article.description?.slice(0, 3_000) ?? null,
+  }));
+  const articleIdSet = new Set(articleIds);
+  const analysis = await analyzeArticles(articles, [{
+    id: story.id,
+    headline: story.headline,
+    summary: story.summary,
+    detailed_content: story.detailed_content,
+  }]);
+  verifyAssignments(analysis, articleIdSet, new Set([story.id]));
+  if (analysis.groups.length !== 1 || analysis.excluded_articles.length !== 0) {
+    throw new Error('Gemini did not return exactly one story group for this existing story; no data was changed.');
+  }
+  const group = analysis.groups[0];
+  if (group.existing_story_id !== story.id || group.article_ids.length !== articleIds.length
+    || group.article_ids.some((id) => !articleIdSet.has(id))) {
+    throw new Error('Gemini changed the existing story or article membership; no data was changed.');
+  }
+
+  const score = rankScore(group);
+  const articleById = new Map(articles.map((article) => [article.id, article]));
+  const newSourceLinks = sourceLinksFor(group.article_ids, articleById);
+  const newFacts = group.verified_facts.map((fact) => ({
+    claim: fact.claim,
+    source_article_ids: fact.article_ids,
+    source_urls: fact.article_ids.map((id) => articleById.get(id)!.url),
+  }));
+  const payload = {
+    headline: group.headline,
+    summary: group.summary,
+    detailed_content: detailedContent(group, newFacts),
+    importance_score: group.importance_score,
+    why_it_matters: group.why_it_matters,
+    future_implications: group.future_implications,
+    analysis: group.analysis,
+    verified_facts: newFacts as Json,
+    source_links: newSourceLinks as Json,
+    relevance_score: group.relevance_score,
+    impact_score: group.impact_score,
+    credibility_score: group.credibility_score,
+    rank_score: score,
+  };
+
+  console.info(`[Supabase] Updating existing story ${storyId} after validated Gemini analysis; no relationships will be overwritten.`);
+  const { data: saved, error: saveError } = await supabaseAdmin
+    .from('stories')
+    .update(payload)
+    .eq('id', storyId)
+    .select('id,headline,summary,detailed_content,why_it_matters,future_implications,rank_score,source_links')
+    .single();
+  if (saveError) throw new Error(`Could not save regenerated story: ${saveError.message}`);
+  if (!saved.headline || !saved.summary || !saved.detailed_content || !saved.why_it_matters
+    || !saved.future_implications || saved.rank_score !== score) {
+    throw new Error('Saved story did not pass read-after-write verification.');
+  }
+
+  const { data: verifiedRelationships, error: verifyError } = await supabaseAdmin
+    .from('story_articles')
+    .select('article_id,story_id,is_relevant')
+    .in('article_id', articleIds);
+  if (verifyError) throw new Error(`Story was saved but relationship verification failed: ${verifyError.message}`);
+  const verifiedByArticle = new Map((verifiedRelationships ?? []).map((row) => [row.article_id, row]));
+  if (articleIds.some((id) => {
+    const row = verifiedByArticle.get(id);
+    return !row || row.story_id !== storyId || !row.is_relevant;
+  })) throw new Error('Story was saved but its original article relationships no longer match.');
+
+  console.info(`[Supabase] Verified regenerated story ${storyId} and preserved all ${articleIds.length} article relationships.`);
+  return {
+    ...emptyResult(),
+    articlesFetched: articles.length,
+    storiesUpdated: 1,
+    articlesLinked: articleIds.length,
+  };
 }
