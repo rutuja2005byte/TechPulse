@@ -36,6 +36,12 @@ export type Database = {
         Update: { id?: string; newsletter_date?: string; subject?: string; html_content?: string; delivery_status?: string; resend_email_id?: string | null; recipient_count?: number | null; sent_at?: string | null; delivery_error?: string | null; created_at?: string; updated_at?: string };
         Relationships: [];
       };
+      newsletter_test_sends: {
+        Row: { id: string; newsletter_id: string; request_hash: string; recipient_email: string; send_status: string; resend_email_id: string | null; sent_at: string | null; delivery_error: string | null; created_at: string; updated_at: string };
+        Insert: { id?: string; newsletter_id: string; request_hash: string; recipient_email: string; send_status?: string; resend_email_id?: string | null; sent_at?: string | null; delivery_error?: string | null; created_at?: string; updated_at?: string };
+        Update: { id?: string; newsletter_id?: string; request_hash?: string; recipient_email?: string; send_status?: string; resend_email_id?: string | null; sent_at?: string | null; delivery_error?: string | null; created_at?: string; updated_at?: string };
+        Relationships: [{ foreignKeyName: 'newsletter_test_sends_newsletter_id_fkey'; columns: ['newsletter_id']; isOneToOne: false; referencedRelation: 'newsletters'; referencedColumns: ['id'] }];
+      };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;
