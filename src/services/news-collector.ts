@@ -16,6 +16,7 @@ interface CollectionResult {
   skipped: number;
   failedFeeds: number;
   failedArticles: number;
+  failedDatabaseOperations: number;
 }
 
 function logSkipped(source: FeedSource, articleLabel: string, reason: string): void {
@@ -83,11 +84,19 @@ export async function collectNews(): Promise<CollectionResult> {
     console.warn('No active RSS sources found. Seed sources or mark existing source rows active in Supabase.');
   }
 
-  const result: CollectionResult = { fetched: 0, stored: 0, skipped: 0, failedFeeds: 0, failedArticles: 0 };
+  const result: CollectionResult = {
+    fetched: 0,
+    stored: 0,
+    skipped: 0,
+    failedFeeds: 0,
+    failedArticles: 0,
+    failedDatabaseOperations: 0,
+  };
   const seenUrls = new Set<string>();
   const seenSourceHashes = new Set<string>();
 
   for (const source of sources) {
+    const sourceStart = { stored: result.stored, skipped: result.skipped, failedArticles: result.failedArticles };
     console.info(`Fetching ${source.name}: ${source.url}`);
     let feedItems: Awaited<ReturnType<typeof parser.parseURL>>['items'];
     try {
@@ -98,8 +107,10 @@ export async function collectNews(): Promise<CollectionResult> {
     } catch (error) {
       result.failedFeeds += 1;
       console.error(`Feed error [${source.name}] ${source.url}: ${error instanceof Error ? error.message : String(error)}`);
+      console.info(`${source.name}: fetched=0, stored=0, skipped=0, failedFeeds=1, failedArticles=0.`);
       continue;
     }
+    if (feedItems.length === 0) console.info(`${source.name}: feed returned zero items (valid empty feed).`);
 
     const validArticles: NormalizedArticle[] = [];
     for (const [index, item] of feedItems.entries()) {
@@ -115,7 +126,10 @@ export async function collectNews(): Promise<CollectionResult> {
 
     const uniqueArticles = uniqueArticlesForSource(source, validArticles, seenUrls, seenSourceHashes);
     result.skipped += validArticles.length - uniqueArticles.length;
-    if (uniqueArticles.length === 0) continue;
+    if (uniqueArticles.length === 0) {
+      console.info(`${source.name}: fetched=${feedItems.length}, stored=0, skipped=${result.skipped - sourceStart.skipped}, failedFeeds=0, failedArticles=0.`);
+      continue;
+    }
 
     const urls = uniqueArticles.map(({ url }) => url);
     const hashes = [...new Set(uniqueArticles.map(({ contentHash }) => contentHash))];
@@ -124,13 +138,15 @@ export async function collectNews(): Promise<CollectionResult> {
       supabaseAdmin.from('articles').select('content_hash').eq('source_id', source.id).in('content_hash', hashes),
     ]);
     if (urlResult.error) {
-      result.failedFeeds += 1;
+      result.failedDatabaseOperations += 1;
       console.error(`Database duplicate check failed [${source.name}]: ${urlResult.error.message}`);
+      console.info(`${source.name}: fetched=${feedItems.length}, stored=0, skipped=${result.skipped - sourceStart.skipped}, failedFeeds=0, failedArticles=0, failedDatabaseOperations=1.`);
       continue;
     }
     if (hashResult.error) {
-      result.failedFeeds += 1;
+      result.failedDatabaseOperations += 1;
       console.error(`Database content-hash check failed [${source.name}]: ${hashResult.error.message}`);
+      console.info(`${source.name}: fetched=${feedItems.length}, stored=0, skipped=${result.skipped - sourceStart.skipped}, failedFeeds=0, failedArticles=0, failedDatabaseOperations=1.`);
       continue;
     }
 
@@ -175,9 +191,9 @@ export async function collectNews(): Promise<CollectionResult> {
       result.failedArticles += 1;
       console.error(`Article insert failed [${source.name}] ${article.url}: ${error.message} (code ${error.code ?? 'unknown'})`);
     }
-    console.info(`${source.name}: stored ${sourceStored} article(s) from ${rowsToInsert.length} insert candidate(s).`);
+    console.info(`${source.name}: fetched=${feedItems.length}, stored=${sourceStored}, skipped=${result.skipped - sourceStart.skipped}, failedFeeds=0, failedArticles=${result.failedArticles - sourceStart.failedArticles}, insertCandidates=${rowsToInsert.length}.`);
   }
 
-  console.info(`Collection totals: fetched=${result.fetched}, stored=${result.stored}, skipped=${result.skipped}, failedFeeds=${result.failedFeeds}, failedArticles=${result.failedArticles}.`);
+  console.info(`Collection totals: fetched=${result.fetched}, stored=${result.stored}, skipped=${result.skipped}, failedFeeds=${result.failedFeeds}, failedArticles=${result.failedArticles}, failedDatabaseOperations=${result.failedDatabaseOperations}.`);
   return result;
 }

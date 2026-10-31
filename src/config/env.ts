@@ -26,4 +26,9 @@ export const env = {
   rssFeedUrls: (process.env.RSS_FEED_URLS ?? '').split(',').map((url) => url.trim()).filter(Boolean),
   articleMaxAgeDays: positiveIntegerEnv('ARTICLE_MAX_AGE_DAYS', 7),
   feedTimeoutMs: positiveIntegerEnv('RSS_FEED_TIMEOUT_MS', 15_000),
+  geminiApiKey: process.env.GEMINI_API_KEY,
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+  geminiTimeoutMs: positiveIntegerEnv('GEMINI_TIMEOUT_MS', 180_000),
+  aiMaxArticlesPerRun: positiveIntegerEnv('AI_MAX_ARTICLES_PER_RUN', 100),
+  aiArticlesPerRequest: positiveIntegerEnv('AI_ARTICLES_PER_REQUEST', 10),
 };
