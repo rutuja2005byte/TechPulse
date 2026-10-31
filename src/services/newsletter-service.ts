@@ -89,6 +89,21 @@ export function newsletterSubject(newsletterDate: string): string {
   return `TechPulse Daily Briefing — ${formatted}`;
 }
 
+export function currentNewsletterDate(now = new Date()): string {
+  const dateParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: env.newsletterTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const part = (type: string) => dateParts.find((item) => item.type === type)?.value;
+  const year = part('year');
+  const month = part('month');
+  const day = part('day');
+  if (!year || !month || !day) throw new Error('Could not determine newsletter calendar date.');
+  return `${year}-${month}-${day}`;
+}
+
 export function renderNewsletterHtml(stories: NewsletterStory[], newsletterDate: string): string {
   const date = new Intl.DateTimeFormat('en-US', { dateStyle: 'full', timeZone: 'UTC' })
     .format(new Date(`${newsletterDate}T00:00:00.000Z`));
@@ -132,10 +147,23 @@ function validatedSendConfiguration(testSender = false): { apiKey: string; from:
 }
 
 export async function previewNewsletter(): Promise<{ storyCount: number; subject: string; html: string }> {
-  const newsletterDate = new Date().toISOString().slice(0, 10);
+  const newsletterDate = currentNewsletterDate();
   const stories = await loadImportantStories();
   if (!stories.length) throw new Error('No valid stories meet the newsletter importance threshold. No newsletter was created.');
   return { storyCount: stories.length, subject: newsletterSubject(newsletterDate), html: renderNewsletterHtml(stories, newsletterDate) };
+}
+
+export async function getTodaysNewsletterStatus(): Promise<{ date: string; status: string | null }> {
+  const date = currentNewsletterDate();
+  const { data, error } = await supabaseAdmin
+    .from('newsletters')
+    .select('delivery_status')
+    .eq('newsletter_date', date)
+    .maybeSingle();
+  if (error) throw new Error(`Could not safely check today's newsletter status: ${error.message}`);
+  const status = data?.delivery_status ?? null;
+  console.info(`[Newsletter] Read-only status check for ${date} (${env.newsletterTimeZone}): ${status ?? 'no record'}.`);
+  return { date, status };
 }
 
 function senderDomain(from: string): string {
@@ -199,7 +227,7 @@ interface TestNewsletterRecord {
 export async function sendNewsletter(retryFailed = false): Promise<void> {
   requireFreeTierConfirmation(env.freeTierConfirmed, 'Resend');
   const { apiKey, from, recipients } = validatedSendConfiguration();
-  const newsletterDate = new Date().toISOString().slice(0, 10);
+  const newsletterDate = currentNewsletterDate();
   const { data: existing, error: lookupError } = await supabaseAdmin
     .from('newsletters')
     .select('id,newsletter_date,subject,html_content,delivery_status,resend_email_id,recipient_count,sent_at,delivery_error')

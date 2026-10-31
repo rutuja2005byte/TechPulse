@@ -33,6 +33,16 @@ function freeGeminiModel(): string {
   return freeModel;
 }
 
+function newsletterTimeZoneEnv(): string {
+  const timeZone = process.env.NEWSLETTER_TIME_ZONE || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+  } catch {
+    throw new Error('NEWSLETTER_TIME_ZONE must be a valid IANA time zone.');
+  }
+  return timeZone;
+}
+
 export const env = {
   supabaseUrl: requiredEnv('SUPABASE_URL'),
   supabaseAnonKey: requiredEnv('SUPABASE_ANON_KEY'),
@@ -51,4 +61,5 @@ export const env = {
   resendFromEmail: process.env.RESEND_FROM_EMAIL,
   newsletterRecipients: (process.env.NEWSLETTER_RECIPIENTS ?? '').split(',').map((email) => email.trim()).filter(Boolean),
   newsletterMinImportanceScore: scoreThresholdEnv('NEWSLETTER_MIN_IMPORTANCE_SCORE', 70),
+  newsletterTimeZone: newsletterTimeZoneEnv(),
 };

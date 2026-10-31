@@ -67,7 +67,9 @@ export async function analyzeArticles(
   console.info(`[Gemini] API key configured: yes. Model: ${env.geminiModel}. Request timeout: ${env.geminiTimeoutMs}ms.`);
   const ai = new GoogleGenAI({
     apiKey: env.geminiApiKey,
-    httpOptions: { timeout: env.geminiTimeoutMs },
+    // Disable SDK-internal retries (which include HTTP 429 by default). The
+    // outer loop retries only transient 5xx errors; quota/rate failures stop.
+    httpOptions: { timeout: env.geminiTimeoutMs, retryOptions: { attempts: 1 } },
   });
   let responseText: string | undefined;
   let responseFinishReason = 'unknown';

@@ -1,10 +1,11 @@
-import { previewNewsletter, sendNewsletter, sendNewsletterTest } from './services/newsletter-service.js';
+import { getTodaysNewsletterStatus, previewNewsletter, sendNewsletter, sendNewsletterTest } from './services/newsletter-service.js';
 
 const usage = [
   'Usage:',
   '  npm run newsletter -- --preview   Generate and validate HTML without storing or sending',
   '  npm run newsletter -- --send      Reserve today and send once through Resend',
   '  npm run newsletter -- --retry     Retry today\'s definite failed, unsent record',
+  '  npm run newsletter -- --status    Read today\'s newsletter status without changing data',
   '  npm run newsletter -- --test-send <sent-newsletter-id>  Send its stored HTML to one configured Gmail',
   '  npm run newsletter -- --help      Show this help',
 ].join('\n');
@@ -23,6 +24,12 @@ async function main(): Promise<void> {
     }
     console.info(`[Newsletter] HTML preview is valid: ${preview.storyCount} stories, ${preview.html.length} characters.`);
     console.info(`[Newsletter] Subject: ${preview.subject}`);
+    return;
+  }
+  if (command === '--status' && args.length === 1) {
+    const { date, status } = await getTodaysNewsletterStatus();
+    console.info(`NEWSLETTER_DATE=${date}`);
+    console.info(`NEWSLETTER_STATUS=${status ?? 'none'}`);
     return;
   }
   if (command === '--send') {
