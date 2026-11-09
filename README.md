@@ -32,5 +32,5 @@ npm run newsletter -- --preview
 npm run newsletter -- --send
 ```
 
-
+I wrote up the full journey here: https://techpulse-news.surge.sh/
 
